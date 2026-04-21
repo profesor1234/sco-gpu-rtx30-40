@@ -74,7 +74,7 @@ static const uint32_t K_CPU[64]={
 };
 
 /* ── Midstate ────────────────────────────────────────────────────── */
-typedef struct { uint32_t h[8]; char tail[128]; int tail_len; int total_prefix_len; } Midstate;
+typedef struct { uint32_t h[8]; char tail[256]; int tail_len; int total_prefix_len; } Midstate;
 
 static void sha256_block_cpu(uint32_t state[8], const uint8_t block[64]) {
     uint32_t w[64];
@@ -260,7 +260,7 @@ static int jbool(const char* js,const char* key){
 }
 
 /* ── Work template ───────────────────────────────────────────────── */
-typedef struct{int block_index;char previous_hash[128];int difficulty;int reward;long long timestamp;long long last_timestamp;char transactions[512];}WorkTemplate;
+typedef struct{int block_index;char previous_hash[256];int difficulty;int reward;long long timestamp;long long last_timestamp;char transactions[2048];}WorkTemplate;
 
 static int fetch_work(const char* host,int port,const char* path,const char* address,WorkTemplate* work){
     static char resp[8192];memset(resp,0,sizeof(resp));int status=0;
@@ -374,7 +374,7 @@ int main(int argc, char** argv) {
         if(now<minTs){printf("[AntiSpike] Waiting %llds...\n",minTs-now);msleep((int)((minTs-now)*1000));}
 
         long long ts=(long long)time(NULL);
-        char prefix[512];int plen=sprintf(prefix,"%d%lld%s%s",work.block_index,(long long)ts,work.transactions,work.previous_hash);
+        char prefix[2048];int plen=sprintf(prefix,"%d%lld%s%s",work.block_index,(long long)ts,work.transactions,work.previous_hash);
         Midstate ms;compute_midstate(prefix,plen,&ms);
         printf("[Midstate] prefix=%d covered=%d tail=%d\n",plen,plen-ms.tail_len,ms.tail_len);
 
