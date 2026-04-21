@@ -359,7 +359,7 @@ int main(int argc, char** argv) {
     /* GPU buffers */
     uint32_t *d_midstate;char *d_tail,*d_suffix,*d_found_hash;
     long long *d_found_nonce,*d_found_ts_dev;
-    cudaMalloc(&d_midstate,8*sizeof(uint32_t));cudaMalloc(&d_tail,256);cudaMalloc(&d_suffix,256);
+    cudaMalloc(&d_midstate,8*sizeof(uint32_t));cudaMalloc(&d_tail,2048);cudaMalloc(&d_suffix,256);
     cudaMalloc(&d_found_nonce,sizeof(long long));cudaMalloc(&d_found_ts_dev,sizeof(long long));cudaMalloc(&d_found_hash,65);
 
     WorkTemplate work; long long last_accepted_ts=0,total_blocks=0; double session_start=get_time();
@@ -374,7 +374,7 @@ int main(int argc, char** argv) {
         if(now<minTs){printf("[AntiSpike] Waiting %llds...\n",minTs-now);msleep((int)((minTs-now)*1000));}
 
         long long ts=(long long)time(NULL);
-        char prefix[2048];int plen=sprintf(prefix,"%d%lld%s%s",work.block_index,(long long)ts,work.transactions,work.previous_hash);
+        char prefix[2048];int plen=snprintf(prefix,sizeof(prefix),"%d%lld%s%s",work.block_index,(long long)ts,work.transactions,work.previous_hash);
         Midstate ms;compute_midstate(prefix,plen,&ms);
         printf("[Midstate] prefix=%d covered=%d tail=%d\n",plen,plen-ms.tail_len,ms.tail_len);
 
@@ -395,7 +395,7 @@ int main(int argc, char** argv) {
         for(;;){
             long long new_ts=(long long)time(NULL);
             if(new_ts!=ts){
-                ts=new_ts;plen=sprintf(prefix,"%d%lld%s%s",work.block_index,ts,work.transactions,work.previous_hash);
+                ts=new_ts;plen=snprintf(prefix,sizeof(prefix),"%d%lld%s%s",work.block_index,ts,work.transactions,work.previous_hash);
                 compute_midstate(prefix,plen,&ms);
                 cudaMemcpy(d_midstate,ms.h,8*sizeof(uint32_t),cudaMemcpyHostToDevice);
                 cudaMemcpy(d_tail,ms.tail,ms.tail_len,cudaMemcpyHostToDevice);
@@ -436,7 +436,7 @@ int main(int argc, char** argv) {
                         cudaMemset(d_found_hash,0,65);
                         base=global_base;batch_hashes=0;t0=get_time();tr=t0;
                         ts=(long long)time(NULL);
-                        plen=sprintf(prefix,"%d%lld%s%s",work.block_index,ts,work.transactions,work.previous_hash);
+                        plen=snprintf(prefix,sizeof(prefix),"%d%lld%s%s",work.block_index,ts,work.transactions,work.previous_hash);
                         compute_midstate(prefix,plen,&ms);
                         cudaMemcpy(d_midstate,ms.h,8*sizeof(uint32_t),cudaMemcpyHostToDevice);
                         cudaMemcpy(d_tail,ms.tail,ms.tail_len,cudaMemcpyHostToDevice);
@@ -452,7 +452,7 @@ int main(int argc, char** argv) {
         printf("[Found!] #%d nonce=%lld ts=%lld %.1fs %.2f MH/s\n",work.block_index,(long long)h_nonce,(long long)h_found_ts,el,(double)batch_hashes/el/1e6);
         printf("[Hash] GPU: %s\n",h_hash);
 
-        char verify_in[512];sprintf(verify_in,"%d%lld%s%s%lld%s",work.block_index,(long long)h_found_ts,work.transactions,work.previous_hash,(long long)h_nonce,address);
+        char verify_in[2048];snprintf(verify_in,sizeof(verify_in),"%d%lld%s%s%lld%s",work.block_index,(long long)h_found_ts,work.transactions,work.previous_hash,(long long)h_nonce,address);
         char cpu_hash[65];sha256_cpu(verify_in,cpu_hash);printf("[Hash] CPU: %s\n",cpu_hash);
         if(strcmp(h_hash,cpu_hash)!=0){printf("[ERROR] GPU/CPU mismatch!\n");
             h_nonce=-1LL;cudaMemcpy(d_found_nonce,&h_nonce,sizeof(long long),cudaMemcpyHostToDevice);cudaMemset(d_found_hash,0,65);continue;}
