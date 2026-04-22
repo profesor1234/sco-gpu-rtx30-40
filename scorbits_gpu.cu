@@ -370,8 +370,8 @@ int main(int argc, char** argv) {
         printf("[Work] #%d | diff=%d | reward=%d | lastTs=%lld\n",work.block_index,work.difficulty,work.reward,(long long)work.last_timestamp);
         if(work.last_timestamp>last_accepted_ts) last_accepted_ts=work.last_timestamp;
 
-        long long minTs=last_accepted_ts+125, now=(long long)time(NULL);
-        if(now<minTs){printf("[AntiSpike] Waiting %llds...\n",minTs-now);msleep((int)((minTs-now)*1000));}
+        /* No pre-wait — keep GPU mining immediately!
+         * We will wait only right before submitting if needed */
 
         long long ts=(long long)time(NULL);
         char prefix[2048];int plen=snprintf(prefix,sizeof(prefix),"%d%lld%s%s",work.block_index,(long long)ts,work.transactions,work.previous_hash);
@@ -457,6 +457,17 @@ int main(int argc, char** argv) {
         if(strcmp(h_hash,cpu_hash)!=0){printf("[ERROR] GPU/CPU mismatch!\n");
             h_nonce=-1LL;cudaMemcpy(d_found_nonce,&h_nonce,sizeof(long long),cudaMemcpyHostToDevice);cudaMemset(d_found_hash,0,65);continue;}
         printf("[Verify] OK!\n");
+
+        /* Wait for anti-spike window only if needed — GPU kept mining until now */
+        {
+            long long need_ts = last_accepted_ts + 121;
+            long long now_t = (long long)time(NULL);
+            if(now_t < need_ts){
+                long long wait = need_ts - now_t;
+                printf("[AntiSpike] Wait %llds before submit (GPU mined during prep)...\n", wait);
+                msleep((int)(wait * 1000));
+            }
+        }
 
         printf("[Submit] ts=%lld now=%lld\n",(long long)h_found_ts,(long long)time(NULL));
         double retry_start=get_time();int submitted_index=work.block_index;int submit_attempts=0;
