@@ -458,7 +458,7 @@ int main(int argc, char** argv) {
             h_nonce=-1LL;cudaMemcpy(d_found_nonce,&h_nonce,sizeof(long long),cudaMemcpyHostToDevice);cudaMemset(d_found_hash,0,65);continue;}
         printf("[Verify] OK!\n");
 
-        /* Check anti-spike window using chain's last_timestamp from work */
+        /* Wait for anti-spike window using chain's last_timestamp */
         {
             long long chain_last = work.last_timestamp;
             long long need_ts = chain_last + 121;
@@ -466,9 +466,64 @@ int main(int argc, char** argv) {
             if(now_t < need_ts){
                 long long wait = need_ts - now_t;
                 printf("[AntiSpike] Wait %llds (chain lastTs=%lld)...\n", wait, chain_last);
-                msleep((int)(wait * 1000));
+                /* Keep GPU mining during wait — find a FRESH block for when window opens */
+                long long wait_base = base;
+                double wait_t0 = get_time();
+                long long wait_hashes = 0;
+                while((long long)time(NULL) < need_ts){
+                    long long new_ts2=(long long)time(NULL);
+                    if(new_ts2!=ts){
+                        ts=new_ts2;
+                        plen=snprintf(prefix,sizeof(prefix),"%d%lld%s%s",work.block_index,(long long)ts,work.transactions,work.previous_hash);
+                        compute_midstate(prefix,plen,&ms);
+                        cudaMemcpy(d_midstate,ms.h,8*sizeof(uint32_t),cudaMemcpyHostToDevice);
+                        cudaMemcpy(d_tail,ms.tail,ms.tail_len,cudaMemcpyHostToDevice);
+                        smem_size=ms.tail_len+slen;
+                    }
+                    /* Check for newer block from chain */
+                    WorkTemplate fresh2;memset(&fresh2,0,sizeof(fresh2));
+                    if(fetch_work(node_host,node_port,work_path,address,&fresh2)){
+                        if(fresh2.block_index!=work.block_index){
+                            printf("[AntiSpike] Chain moved to #%d — switching\n",fresh2.block_index);
+                            work=fresh2; found=0; break;
+                        }
+                        if(fresh2.last_timestamp > chain_last){
+                            chain_last=fresh2.last_timestamp;
+                            need_ts=chain_last+121;
+                            work.last_timestamp=chain_last;
+                            printf("[AntiSpike] lastTs updated to %lld — new wait %llds\n",
+                                chain_last,(long long)(need_ts-(long long)time(NULL)));
+                        }
+                    }
+                    if(!found) break;
+                    /* Reset found and keep mining for fresh block */
+                    h_nonce=-1LL;
+                    cudaMemcpy(d_found_nonce,&h_nonce,sizeof(long long),cudaMemcpyHostToDevice);
+                    cudaMemset(d_found_hash,0,65);
+                    mine_kernel<<<bpg,tpb,smem_size>>>(d_midstate,d_tail,ms.tail_len,d_suffix,slen,ms.total_prefix_len,
+                        wait_base,work.difficulty,d_found_nonce,d_found_ts_dev,ts,d_found_hash);
+                    cudaDeviceSynchronize();
+                    wait_hashes+=batch; wait_base+=batch; base=wait_base; global_base=base;
+                    cudaMemcpy(&h_nonce,d_found_nonce,sizeof(long long),cudaMemcpyDeviceToHost);
+                    if(h_nonce!=-1LL){
+                        cudaMemcpy(h_hash,d_found_hash,64,cudaMemcpyDeviceToHost);
+                        cudaMemcpy(&h_found_ts,d_found_ts_dev,sizeof(long long),cudaMemcpyDeviceToHost);
+                        h_hash[64]='\0';
+                        /* Verify new hash */
+                        char vi2[2048];snprintf(vi2,sizeof(vi2),"%d%lld%s%s%lld%s",work.block_index,(long long)h_found_ts,work.transactions,work.previous_hash,(long long)h_nonce,address);
+                        char ch2[65];sha256_cpu(vi2,ch2);
+                        if(strcmp(h_hash,ch2)==0){
+                            printf("[AntiSpike] Fresh block found! nonce=%lld ts=%lld\n",(long long)h_nonce,(long long)h_found_ts);
+                        }
+                    }
+                    double wr=get_time()-wait_t0;
+                    if(wr>0) printf("[Waiting] %.2f MH/s | %llds left\n",
+                        (double)wait_hashes/wr/1e6,(long long)(need_ts-(long long)time(NULL)));
+                    msleep(100);
+                }
             }
         }
+        if(!found) continue;
 
         printf("[Submit] ts=%lld now=%lld\n",(long long)h_found_ts,(long long)time(NULL));
         double retry_start=get_time();int submitted_index=work.block_index;int submit_attempts=0;
