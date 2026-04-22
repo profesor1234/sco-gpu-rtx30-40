@@ -368,6 +368,7 @@ int main(int argc, char** argv) {
         printf("[Work] Fetching...\n");memset(&work,0,sizeof(work));
         if(!fetch_work(node_host,node_port,work_path,address,&work)){printf("[Work] Failed — 5s\n");msleep(5000);continue;}
         printf("[Work] #%d | diff=%d | reward=%d | lastTs=%lld\n",work.block_index,work.difficulty,work.reward,(long long)work.last_timestamp);
+        if(work.last_timestamp>last_accepted_ts) last_accepted_ts=work.last_timestamp;
         /* Only track OUR accepted blocks for anti-spike — not others' */
 
         /* No pre-wait — keep GPU mining immediately!
@@ -457,13 +458,14 @@ int main(int argc, char** argv) {
             h_nonce=-1LL;cudaMemcpy(d_found_nonce,&h_nonce,sizeof(long long),cudaMemcpyHostToDevice);cudaMemset(d_found_hash,0,65);continue;}
         printf("[Verify] OK!\n");
 
-        /* Wait for anti-spike window only if needed — GPU kept mining until now */
+        /* Check anti-spike window using chain's last_timestamp from work */
         {
-            long long need_ts = last_accepted_ts + 121;
+            long long chain_last = work.last_timestamp;
+            long long need_ts = chain_last + 121;
             long long now_t = (long long)time(NULL);
             if(now_t < need_ts){
                 long long wait = need_ts - now_t;
-                printf("[AntiSpike] Wait %llds before submit (GPU mined during prep)...\n", wait);
+                printf("[AntiSpike] Wait %llds (chain lastTs=%lld)...\n", wait, chain_last);
                 msleep((int)(wait * 1000));
             }
         }
@@ -485,20 +487,9 @@ int main(int argc, char** argv) {
             else if(sr.http_status==409){printf("[Stale]\n");break;}
             else if(sr.http_status==429){printf("[RateLimit] 30s\n");msleep(30000);break;}
             else if(strstr(sr.error,"rapide")||strstr(sr.error,"anti-spike")||strstr(sr.error,"spike")){
-                printf("[Rejected] %s (attempt %d)\n",sr.error,submit_attempts);
-                if(submit_attempts>=2){
-                    WorkTemplate fresh;memset(&fresh,0,sizeof(fresh));
-                    if(fetch_work(node_host,node_port,work_path,address,&fresh)){
-                        if(fresh.block_index!=submitted_index){printf("[Stale] Chain moved to #%d\n",fresh.block_index);break;}
-                        long long chain_last=fresh.last_timestamp;
-                        long long need_ts=chain_last+121;
-                        long long now3=(long long)time(NULL);
-                        if(now3<need_ts){long long w=need_ts-now3;printf("[AntiSpike] wait %llds\n",w);msleep((int)(w*1000));}
-                        printf("[Re-mine] Fresh timestamp\n");
-                    }
-                    break;
-                }
-                msleep(3000);
+                printf("[Rejected] %s — fetching fresh work\n",sr.error);
+                /* Don't wait idle — break and re-mine with correct timestamp */
+                break;
             }
             else{printf("[Rejected] HTTP=%d %s\n",sr.http_status,sr.error);break;}
         }
