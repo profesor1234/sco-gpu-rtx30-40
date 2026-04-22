@@ -368,7 +368,7 @@ int main(int argc, char** argv) {
         printf("[Work] Fetching...\n");memset(&work,0,sizeof(work));
         if(!fetch_work(node_host,node_port,work_path,address,&work)){printf("[Work] Failed — 5s\n");msleep(5000);continue;}
         printf("[Work] #%d | diff=%d | reward=%d | lastTs=%lld\n",work.block_index,work.difficulty,work.reward,(long long)work.last_timestamp);
-        if(work.last_timestamp>last_accepted_ts) last_accepted_ts=work.last_timestamp;
+        /* Only track OUR accepted blocks for anti-spike — not others' */
 
         /* No pre-wait — keep GPU mining immediately!
          * We will wait only right before submitting if needed */
@@ -431,7 +431,6 @@ int main(int argc, char** argv) {
                         if(new_block) printf("[Chain] #%d -> #%d\n",work.block_index,fresh.block_index);
                         if(new_diff) printf("[DiffChange] %d -> %d mid-block!\n",work.difficulty,fresh.difficulty);
                         work=fresh;
-                        if(work.last_timestamp>last_accepted_ts)last_accepted_ts=work.last_timestamp;
                         h_nonce=-1LL;cudaMemcpy(d_found_nonce,&h_nonce,sizeof(long long),cudaMemcpyHostToDevice);
                         cudaMemset(d_found_hash,0,65);
                         base=global_base;batch_hashes=0;t0=get_time();tr=t0;
@@ -494,8 +493,8 @@ int main(int argc, char** argv) {
                         long long chain_last=fresh.last_timestamp;
                         long long need_ts=chain_last+121;
                         long long now3=(long long)time(NULL);
-                        if(now3<need_ts){long long w=need_ts-now3;printf("[AntiSpike] Chain lastTs=%lld, wait %llds then re-mine\n",chain_last,w);msleep((int)(w*1000));}
-                        last_accepted_ts=chain_last;printf("[Re-mine] Fresh timestamp\n");
+                        if(now3<need_ts){long long w=need_ts-now3;printf("[AntiSpike] wait %llds\n",w);msleep((int)(w*1000));}
+                        printf("[Re-mine] Fresh timestamp\n");
                     }
                     break;
                 }
